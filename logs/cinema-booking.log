@@ -1,0 +1,6 @@
+2026-01-15T10:54:45.780+0700	INFO	assignment-6-v2/main.go:31	Starting application	{"app": "CinemaBooking", "port": "8080", "debug": true}
+2026-01-15T10:54:46.085+0700	INFO	assignment-6-v2/main.go:44	Database connected successfully
+2026-01-15T10:54:46.086+0700	INFO	assignment-6-v2/main.go:53	Starting HTTP server	{"port": "8080"}
+2026-01-15T11:05:04.238+0700	INFO	assignment-6-v2/main.go:31	Starting application	{"app": "CinemaBooking", "port": "8080", "debug": true}
+2026-01-15T11:05:04.377+0700	INFO	assignment-6-v2/main.go:44	Database connected successfully
+2026-01-15T11:05:04.378+0700	INFO	assignment-6-v2/main.go:53	Starting HTTP server	{"port": "8080"}
