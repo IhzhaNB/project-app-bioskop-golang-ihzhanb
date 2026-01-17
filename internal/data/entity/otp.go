@@ -1,4 +1,3 @@
-// internal/data/entity/otp.go
 package entity
 
 import (

@@ -14,11 +14,11 @@ import (
 func AuthSession(sessionRepo repository.SessionRepository, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth untuk public routes
-			if isPublicRoute(r.URL.Path, r.Method) { // PASS METHOD!
-				next.ServeHTTP(w, r)
-				return
-			}
+			// // Skip auth untuk public routes
+			// if isPublicRoute(r.URL.Path, r.Method) { // PASS METHOD!
+			// 	next.ServeHTTP(w, r)
+			// 	return
+			// }
 
 			// Extract token
 			authHeader := r.Header.Get("Authorization")
@@ -28,7 +28,7 @@ func AuthSession(sessionRepo repository.SessionRepository, logger *zap.Logger) f
 			}
 
 			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
+			if len(parts) != 2 || parts[0] != "Bearer " {
 				utils.ResponseUnauthorized(w, "Invalid token format. Use: Bearer <token>")
 				return
 			}
@@ -59,48 +59,6 @@ func AuthSession(sessionRepo repository.SessionRepository, logger *zap.Logger) f
 		})
 	}
 }
-
-// Helper untuk cek public routes (TERIMA METHOD PARAMETER!)
-func isPublicRoute(path, method string) bool {
-	publicRoutes := map[string][]string{
-		"/api/register":        {"POST"},
-		"/api/login":           {"POST"},
-		"/api/cinemas":         {"GET"},
-		"/api/movies":          {"GET"},
-		"/api/payment-methods": {"GET"},
-		"/health":              {"GET"},
-		"/api/send-otp":        {"POST"},
-		"/api/verify-email":    {"POST"},
-	}
-
-	// Check exact path
-	if methods, exists := publicRoutes[path]; exists {
-		for _, m := range methods {
-			if m == method {
-				return true
-			}
-		}
-	}
-
-	// Pattern match: /api/cinemas/{id} (GET only)
-	if strings.HasPrefix(path, "/api/cinemas/") && method == "GET" {
-		parts := strings.Split(path, "/")
-		if len(parts) == 4 && parts[3] != "seats" {
-			// /api/cinemas/{id} → public
-			return true
-		}
-	}
-
-	// Pattern match: /api/cinemas/{id}/seats (GET with query params is public for checking availability)
-	if strings.Contains(path, "/seats") && method == "GET" {
-		// Checking seat availability bisa public
-		return true
-	}
-
-	return false
-}
-
-// ==================== ADMIN ====================
 
 // Admin - middleware cek role admin
 func Admin(userRepo repository.UserRepository, logger *zap.Logger) func(http.Handler) http.Handler {
@@ -136,3 +94,43 @@ func Admin(userRepo repository.UserRepository, logger *zap.Logger) func(http.Han
 		})
 	}
 }
+
+// // Helper untuk cek public routes (TERIMA METHOD PARAMETER!)
+// func isPublicRoute(path, method string) bool {
+// 	publicRoutes := map[string][]string{
+// 		"/api/register":        {"POST"},
+// 		"/api/login":           {"POST"},
+// 		"/api/cinemas":         {"GET"},
+// 		"/api/movies":          {"GET"},
+// 		"/api/payment-methods": {"GET"},
+// 		"/health":              {"GET"},
+// 		"/api/send-otp":        {"POST"},
+// 		"/api/verify-email":    {"POST"},
+// 	}
+
+// 	// Check exact path
+// 	if methods, exists := publicRoutes[path]; exists {
+// 		for _, m := range methods {
+// 			if m == method {
+// 				return true
+// 			}
+// 		}
+// 	}
+
+// 	// Pattern match: /api/cinemas/{id} (GET only)
+// 	if strings.HasPrefix(path, "/api/cinemas/") && method == "GET" {
+// 		parts := strings.Split(path, "/")
+// 		if len(parts) == 4 && parts[3] != "seats" {
+// 			// /api/cinemas/{id} → public
+// 			return true
+// 		}
+// 	}
+
+// 	// Pattern match: /api/cinemas/{id}/seats (GET with query params is public for checking availability)
+// 	if strings.Contains(path, "/seats") && method == "GET" {
+// 		// Checking seat availability bisa public
+// 		return true
+// 	}
+
+// 	return false
+// }

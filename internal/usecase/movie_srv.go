@@ -16,20 +16,15 @@ import (
 )
 
 type MovieService interface {
-	// Get movies dengan pagination (sesuai requirement)
 	GetMovies(ctx context.Context, req *request.PaginatedRequest, releaseStatus *string) (*response.PaginatedResponse[response.MovieResponse], error)
-
-	// Get movie detail
 	GetMovieByID(ctx context.Context, movieID string) (*response.MovieDetailResponse, error)
-
-	// Admin operations (optional)
 	CreateMovie(ctx context.Context, req *request.MovieRequest) (*response.MovieResponse, error)
 	UpdateMovie(ctx context.Context, movieID string, req *request.MovieUpdateRequest) (*response.MovieResponse, error)
 	DeleteMovie(ctx context.Context, movieID string) error
 }
 
 type movieService struct {
-	repo *repository.Repository // grouping Movie, Genre, & MovieGenre Repositories
+	repo *repository.Repository
 	log  *zap.Logger
 }
 
@@ -46,34 +41,33 @@ func NewMovieService(
 func (s *movieService) GetMovies(ctx context.Context, req *request.PaginatedRequest, releaseStatus *string) (*response.PaginatedResponse[response.MovieResponse], error) {
 	limit := req.Limit()
 	offset := req.Offset()
-	page := req.Page
-	perPage := req.PerPage
 
-	// Get movies from repository
-	movies, err := s.repo.Movie.FindAll(ctx, offset, limit, releaseStatus)
+	// Get movies with pagination and filter
+	movies, err := s.repo.Movie.FindAll(ctx, limit, offset, releaseStatus)
 	if err != nil {
-		s.log.Error("Failed to get movies from repository",
+		s.log.Error("Failed to get movies",
 			zap.Error(err),
-			zap.Int("page", page),
-			zap.Int("per_page", perPage),
+			zap.Int("page", req.Page),
+			zap.Int("per_page", req.PerPage),
 			zap.Stringp("release_status", releaseStatus),
 		)
-		return nil, fmt.Errorf("failed to get movies")
+		return nil, fmt.Errorf("get movies: %w", err)
 	}
 
-	// Get total count
+	// Get total count for pagination metadata
 	total, err := s.repo.Movie.CountAll(ctx, releaseStatus)
 	if err != nil {
 		s.log.Error("Failed to count movies",
 			zap.Error(err),
 			zap.Stringp("release_status", releaseStatus),
 		)
-		return nil, fmt.Errorf("failed to count movies")
+		return nil, fmt.Errorf("count movies: %w", err)
 	}
 
-	// Convert to response
+	// Convert each movie to response with additional data
 	movieResponses := make([]response.MovieResponse, len(movies))
 	for i, movie := range movies {
+		// Get associated genres
 		genres, err := s.repo.Genre.FindByMovieID(ctx, movie.ID)
 		if err != nil {
 			s.log.Warn("Failed to get genres for movie",
@@ -87,91 +81,111 @@ func (s *movieService) GetMovies(ctx context.Context, req *request.PaginatedRequ
 			genreNames[j] = genre.Name
 		}
 
-		reviewCount := 0 // TODO: get from review repo
-		movieResponses[i] = s.convertToMovieResponse(movie, genreNames, reviewCount)
+		// Get review statistics
+		avgRating, reviewCount, err := s.repo.Review.GetMovieReviewStats(ctx, movie.ID)
+		if err != nil {
+			// Log error but continue
+			s.log.Warn("Failed to get review stats for movie",
+				zap.Error(err),
+				zap.String("movie_id", movie.ID.String()),
+			)
+			// Use default values
+			avgRating = movie.Rating
+			reviewCount = 0
+		} else if avgRating > 0 { // Update movie rating if reviews exist
+			movie.Rating = avgRating
+		}
+
+		movieResponses[i] = response.MovieToResponse(movie, genreNames, int(reviewCount))
 	}
 
 	s.log.Info("Movies retrieved",
 		zap.Int("count", len(movies)),
 		zap.Int64("total", total),
-		zap.Int("page", page),
-		zap.Int("per_page", perPage),
+		zap.Int("page", req.Page),
+		zap.Int("per_page", req.PerPage),
 	)
 
-	return response.NewPaginatedResponse(movieResponses, page, perPage, total), nil
+	return response.NewPaginatedResponse(movieResponses, req.Page, req.PerPage, total), nil
 }
 
 func (s *movieService) GetMovieByID(ctx context.Context, movieID string) (*response.MovieDetailResponse, error) {
-	// Parse movie ID
 	id, err := uuid.Parse(movieID)
 	if err != nil {
 		s.log.Warn("Invalid movie ID format",
 			zap.String("movie_id", movieID),
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("invalid movie ID")
+		return nil, fmt.Errorf("invalid movie id: %w", err)
 	}
 
-	// Get movie
 	movie, err := s.repo.Movie.FindByID(ctx, id)
 	if err != nil {
 		s.log.Error("Failed to get movie by ID",
 			zap.Error(err),
 			zap.String("movie_id", movieID),
 		)
-		return nil, fmt.Errorf("failed to get movie")
+		return nil, fmt.Errorf("get movie by id: %w", err)
 	}
 
 	if movie == nil {
 		return nil, fmt.Errorf("movie not found")
 	}
 
-	// Get genres
 	genres, err := s.repo.Genre.FindByMovieID(ctx, movie.ID)
 	if err != nil {
 		s.log.Warn("Failed to get genres for movie",
 			zap.Error(err),
 			zap.String("movie_id", movieID),
 		)
-		// Continue with empty genres
 	}
 
-	// Get genre names
 	genreNames := make([]string, len(genres))
 	for i, genre := range genres {
 		genreNames[i] = genre.Name
 	}
 
-	// TODO: Get review count
-	reviewCount := 0
+	avgRating, reviewCount, err := s.repo.Review.GetMovieReviewStats(ctx, movie.ID)
+	if err != nil {
+		s.log.Warn("Failed to get review stats for movie",
+			zap.Error(err),
+			zap.String("movie_id", movieID),
+		)
+		// Use default values
+		reviewCount = 0
+	} else if avgRating > 0 {
+		// Update movie rating from reviews
+		movie.Rating = avgRating
+	}
 
 	s.log.Info("Movie retrieved",
 		zap.String("movie_id", movieID),
 		zap.String("title", movie.Title),
+		zap.Int64("review_count", reviewCount),
+		zap.Float64("avg_rating", avgRating),
 	)
 
-	return s.convertToMovieDetailResponse(movie, genreNames, reviewCount), nil
+	detailMovie := response.MovieToDetailResponse(movie, genreNames, int(reviewCount))
+	return &detailMovie, nil
 }
 
-// CreateMovie - admin only (optional)
 func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieRequest) (*response.MovieResponse, error) {
-	// Validate request
+	// Validate request data
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		s.log.Warn("Create movie validation failed", zap.Any("errors", errs))
 		return nil, fmt.Errorf("validation failed: %s", utils.FormatValidationErrors(errs))
 	}
 
-	// Parse release date
 	releaseDate, err := time.Parse("2006-01-02", req.ReleaseDate)
 	if err != nil {
 		s.log.Warn("Invalid release date format",
 			zap.String("release_date", req.ReleaseDate),
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("invalid release date format")
+		return nil, fmt.Errorf("invalid release date: %w", err)
 	}
 
-	// Parse release status
+	/// Validate release status enum
 	var releaseStatus entity.ReleaseStatus
 	switch req.ReleaseStatus {
 	case "now_playing":
@@ -179,15 +193,15 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 	case "coming_soon":
 		releaseStatus = entity.ReleaseStatusComingSoon
 	default:
-		return nil, fmt.Errorf("invalid release status")
+		return nil, fmt.Errorf("invalid release status: %s", req.ReleaseStatus)
 	}
 
-	// Check if genres exist
+	// Validate genres
 	genreUUIDs := make([]uuid.UUID, 0, len(req.GenreIDs))
 	for _, genreIDStr := range req.GenreIDs {
 		genreID, err := uuid.Parse(genreIDStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid genre ID: %s", genreIDStr)
+			return nil, fmt.Errorf("invalid genre id: %w", err)
 		}
 
 		genre, err := s.repo.Genre.FindByID(ctx, genreID)
@@ -196,7 +210,7 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 				zap.Error(err),
 				zap.String("genre_id", genreIDStr),
 			)
-			return nil, fmt.Errorf("failed to check genre")
+			return nil, fmt.Errorf("check genre: %w", err)
 		}
 		if genre == nil {
 			return nil, fmt.Errorf("genre not found: %s", genreIDStr)
@@ -205,7 +219,7 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 		genreUUIDs = append(genreUUIDs, genreID)
 	}
 
-	// Create movie entity
+	// Create movie
 	now := time.Now()
 	movie := &entity.Movie{
 		Base: entity.Base{
@@ -216,22 +230,22 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 		Title:             req.Title,
 		Description:       req.Description,
 		PosterURL:         req.PosterURL,
-		Rating:            0.0, // Default rating
+		Rating:            0.0,
 		ReleaseDate:       releaseDate,
 		DurationInMinutes: req.DurationInMinutes,
 		ReleaseStatus:     releaseStatus,
 	}
 
-	// Save movie
+	// Save movie to database
 	if err := s.repo.Movie.Create(ctx, movie); err != nil {
 		s.log.Error("Failed to create movie",
 			zap.Error(err),
 			zap.String("title", req.Title),
 		)
-		return nil, fmt.Errorf("failed to create movie")
+		return nil, fmt.Errorf("create movie: %w", err)
 	}
 
-	// Create movie-genre relationships
+	// Create movie-genre relationships in batch
 	if len(genreUUIDs) > 0 {
 		movieGenres := make([]*entity.MovieGenre, len(genreUUIDs))
 		for i, genreID := range genreUUIDs {
@@ -245,12 +259,15 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 			}
 		}
 
+		// Batch insert for performance
 		if err := s.repo.MovieGenre.CreateBatch(ctx, movieGenres); err != nil {
 			s.log.Error("Failed to create movie-genre relationships",
 				zap.Error(err),
 				zap.String("movie_id", movie.ID.String()),
 			)
-			// Rollback movie creation? For now, just log error
+			// Rollback: delete movie if genre relationships fail
+			s.repo.Movie.Delete(ctx, movie.ID)
+			return nil, fmt.Errorf("create movie-genre relationships: %w", err)
 		}
 	}
 
@@ -269,25 +286,26 @@ func (s *movieService) CreateMovie(ctx context.Context, req *request.MovieReques
 		zap.Int("genre_count", len(genreUUIDs)),
 	)
 
-	movieResp := s.convertToMovieResponse(movie, genreNames, 0)
+	movieResp := response.MovieToResponse(movie, genreNames, 0)
 	return &movieResp, nil
 }
 
-// UpdateMovie - admin only (optional)
 func (s *movieService) UpdateMovie(ctx context.Context, movieID string, req *request.MovieUpdateRequest) (*response.MovieResponse, error) {
-	// Parse movie ID
 	id, err := uuid.Parse(movieID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid movie ID")
+		return nil, fmt.Errorf("invalid movie id: %w", err)
 	}
 
-	// Get existing movie
+	// Find existing movie
 	movie, err := s.repo.Movie.FindByID(ctx, id)
-	if err != nil || movie == nil {
+	if err != nil {
+		return nil, fmt.Errorf("find movie: %w", err)
+	}
+	if movie == nil {
 		return nil, fmt.Errorf("movie not found")
 	}
 
-	// Update fields if provided
+	// Apply partial updates only for provided fields
 	updated := false
 
 	if req.Title != nil && *req.Title != movie.Title {
@@ -308,7 +326,7 @@ func (s *movieService) UpdateMovie(ctx context.Context, movieID string, req *req
 	if req.ReleaseDate != nil {
 		releaseDate, err := time.Parse("2006-01-02", *req.ReleaseDate)
 		if err != nil {
-			return nil, fmt.Errorf("invalid release date format")
+			return nil, fmt.Errorf("invalid release date: %w", err)
 		}
 		movie.ReleaseDate = releaseDate
 		updated = true
@@ -327,12 +345,13 @@ func (s *movieService) UpdateMovie(ctx context.Context, movieID string, req *req
 		case "coming_soon":
 			releaseStatus = entity.ReleaseStatusComingSoon
 		default:
-			return nil, fmt.Errorf("invalid release status")
+			return nil, fmt.Errorf("invalid release status: %s", *req.ReleaseStatus)
 		}
 		movie.ReleaseStatus = releaseStatus
 		updated = true
 	}
 
+	// Update timestamp and save only if changes were made
 	if updated {
 		movie.UpdatedAt = time.Now()
 		if err := s.repo.Movie.Update(ctx, movie); err != nil {
@@ -340,11 +359,10 @@ func (s *movieService) UpdateMovie(ctx context.Context, movieID string, req *req
 				zap.Error(err),
 				zap.String("movie_id", movieID),
 			)
-			return nil, fmt.Errorf("failed to update movie")
+			return nil, fmt.Errorf("update movie: %w", err)
 		}
 	}
 
-	// Get genres for response
 	genres, _ := s.repo.Genre.FindByMovieID(ctx, movie.ID)
 	genreNames := make([]string, len(genres))
 	for i, genre := range genres {
@@ -357,43 +375,38 @@ func (s *movieService) UpdateMovie(ctx context.Context, movieID string, req *req
 		zap.Bool("was_updated", updated),
 	)
 
-	movieResp := s.convertToMovieResponse(movie, genreNames, 0)
+	// Return updated movie response
+	movieResp := response.MovieToResponse(movie, genreNames, 0)
 	return &movieResp, nil
 }
 
-// DeleteMovie - admin only (optional)
 func (s *movieService) DeleteMovie(ctx context.Context, movieID string) error {
-	// Parse movie ID
 	id, err := uuid.Parse(movieID)
 	if err != nil {
-		return fmt.Errorf("invalid movie ID")
+		return fmt.Errorf("invalid movie id: %w", err)
 	}
 
-	// Get movie first for logging
 	movie, err := s.repo.Movie.FindByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to find movie")
+		return fmt.Errorf("find movie: %w", err)
 	}
 	if movie == nil {
 		return fmt.Errorf("movie not found")
 	}
 
-	// Delete movie-genre relationships first
 	if err := s.repo.MovieGenre.DeleteByMovieID(ctx, id); err != nil {
 		s.log.Warn("Failed to delete movie-genre relationships",
 			zap.Error(err),
 			zap.String("movie_id", movieID),
 		)
-		// Continue anyway
 	}
 
-	// Soft delete movie
 	if err := s.repo.Movie.Delete(ctx, id); err != nil {
 		s.log.Error("Failed to delete movie",
 			zap.Error(err),
 			zap.String("movie_id", movieID),
 		)
-		return fmt.Errorf("failed to delete movie")
+		return fmt.Errorf("delete movie: %w", err)
 	}
 
 	s.log.Info("Movie deleted",
@@ -402,42 +415,4 @@ func (s *movieService) DeleteMovie(ctx context.Context, movieID string) error {
 	)
 
 	return nil
-}
-
-// Helper methods
-func (s *movieService) convertToMovieResponse(movie *entity.Movie, genres []string, reviewCount int) response.MovieResponse {
-	// Return struct value
-	return response.MovieResponse{
-		ID:                movie.ID.String(),
-		Title:             movie.Title,
-		Description:       movie.Description,
-		PosterURL:         movie.PosterURL,
-		Rating:            movie.Rating,
-		ReviewCount:       reviewCount,
-		ReleaseDate:       movie.ReleaseDate.Format("2006-01-02"),
-		DurationInMinutes: fmt.Sprintf("%d", movie.DurationInMinutes),
-		Genres:            genres,
-		ReleaseStatus:     s.formatReleaseStatus(movie.ReleaseStatus),
-		CreatedAt:         movie.CreatedAt,
-	}
-}
-
-func (s *movieService) formatReleaseStatus(status entity.ReleaseStatus) string {
-	switch status {
-	case entity.ReleaseStatusNowPlaying:
-		return "now"
-	case entity.ReleaseStatusComingSoon:
-		return "coming_soon"
-	default:
-		return string(status)
-	}
-}
-
-func (s *movieService) convertToMovieDetailResponse(movie *entity.Movie, genres []string, reviewCount int) *response.MovieDetailResponse {
-	movieResp := s.convertToMovieResponse(movie, genres, reviewCount)
-	return &response.MovieDetailResponse{
-		MovieResponse: movieResp,
-		Description:   movie.Description,
-		UpdatedAt:     &movie.UpdatedAt,
-	}
 }

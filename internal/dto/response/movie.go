@@ -26,17 +26,9 @@ type MovieDetailResponse struct {
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
-// Untuk response sesuai requirement spesifik
-type MovieListResponse struct {
-	Status     bool            `json:"status"`
-	Message    string          `json:"message"`
-	Data       []MovieResponse `json:"data"`
-	Pagination PaginationMeta  `json:"pagination"`
-}
-
-// Helper untuk convert entity ke response
+// Helper converters
 func MovieToResponse(movie *entity.Movie, genres []string, reviewCount int) MovieResponse {
-	// Format duration sebagai string (sesuai requirement)
+	// Format duration sebagai string
 	durationStr := fmt.Sprintf("%d", movie.DurationInMinutes)
 
 	// Format release status sesuai requirement
@@ -62,5 +54,14 @@ func MovieToResponse(movie *entity.Movie, genres []string, reviewCount int) Movi
 		Genres:            genres,
 		ReleaseStatus:     statusStr,
 		CreatedAt:         movie.CreatedAt,
+	}
+}
+
+func MovieToDetailResponse(movie *entity.Movie, genres []string, reviewCount int) MovieDetailResponse {
+	movieResp := MovieToResponse(movie, genres, reviewCount)
+	return MovieDetailResponse{
+		MovieResponse: movieResp,
+		Description:   movie.Description,
+		UpdatedAt:     &movie.UpdatedAt,
 	}
 }

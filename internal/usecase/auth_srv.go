@@ -24,7 +24,7 @@ type AuthService interface {
 }
 
 type authService struct {
-	repo   *repository.Repository // grouping userRepo, sessionRepo, & otpRepo
+	repo   *repository.Repository
 	config *utils.Config
 	log    *zap.Logger
 }
@@ -42,40 +42,40 @@ func NewAuthService(
 }
 
 func (s *authService) Register(ctx context.Context, req *request.RegisterRequest) (*response.AuthResponse, error) {
-	// 1. Validasi input
+	// Validate input
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		s.log.Warn("Register validation failed", zap.Any("errors", errs))
 		return nil, fmt.Errorf("validation failed: %s", utils.FormatValidationErrors(errs))
 	}
 
-	// 2. Cek email sudah terdaftar
+	// Check if email already exists (prevent duplicate registration)
 	existingUser, err := s.repo.User.FindByEmail(ctx, req.Email)
 	if err != nil {
 		s.log.Error("Failed to check email", zap.Error(err), zap.String("email", req.Email))
-		return nil, fmt.Errorf("failed to check email")
+		return nil, fmt.Errorf("check email %s: %w", req.Email, err)
 	}
 	if existingUser != nil {
-		return nil, fmt.Errorf("email already registered")
+		return nil, fmt.Errorf("email %s already registered", req.Email)
 	}
 
-	// 3. Cek username sudah dipakai
+	// Check if username already taken
 	existingUser, err = s.repo.User.FindByUsername(ctx, req.Username)
 	if err != nil {
 		s.log.Error("Failed to check username", zap.Error(err), zap.String("username", req.Username))
-		return nil, fmt.Errorf("failed to check username")
+		return nil, fmt.Errorf("check username %s: %w", req.Username, err)
 	}
 	if existingUser != nil {
-		return nil, fmt.Errorf("username already taken")
+		return nil, fmt.Errorf("username %s already taken", req.Username)
 	}
 
-	// 4. Hash password
+	// Hash password using bcrypt before storing
 	hashedPassword, err := utils.HashPassword(req.Password)
 	if err != nil {
 		s.log.Error("Failed to hash password", zap.Error(err))
-		return nil, fmt.Errorf("failed to process password")
+		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	// 5. Create user entity
+	// Create user entity with UUID and timestamps
 	now := time.Now()
 	user := &entity.User{
 		Base: entity.Base{
@@ -87,106 +87,109 @@ func (s *authService) Register(ctx context.Context, req *request.RegisterRequest
 		Email:         req.Email,
 		PasswordHash:  hashedPassword,
 		Phone:         req.Phone,
-		Role:          entity.RoleCustomer,
-		EmailVerified: false,
-		IsActive:      true,
+		Role:          entity.RoleCustomer, // Default role: customer
+		EmailVerified: false,               // Email not verified yet
+		IsActive:      true,                // Account is active by default
 	}
 
-	// 6. Save user
+	// Save to database
 	if err := s.repo.User.Create(ctx, user); err != nil {
 		s.log.Error("Failed to create user", zap.Error(err), zap.String("email", req.Email))
-		return nil, fmt.Errorf("failed to create account")
+		return nil, fmt.Errorf("create user account: %w", err)
 	}
 
-	// 7. Send OTP email (async)
-	go s.sendVerificationOTP(user.Email)
+	// Send verification OTP asynchronously (using goroutine)
+	go s.sendVerificationOTP(user.Email) // Non-blocking
 
-	// 8. Auto login setelah register
+	// Create session for auto-login after registration
 	session, err := s.createSession(ctx, user.ID)
 	if err != nil {
 		s.log.Warn("Failed to create session after register",
 			zap.Error(err), zap.String("user_id", user.ID.String()))
-		// Continue tanpa session
 	}
 
 	s.log.Info("User registered",
 		zap.String("user_id", user.ID.String()),
-		zap.String("email", user.Email))
+		zap.String("email", user.Email),
+		zap.String("username", user.Username))
 
-	return s.convertAuthResponse(user, session), nil
+	// Convert to response DTO
+	authResp := response.AuthToResponse(user, session)
+	return &authResp, nil
 }
 
 func (s *authService) Login(ctx context.Context, req *request.LoginRequest) (*response.AuthResponse, error) {
-	// 1. Validasi
+	// Validate input
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		s.log.Warn("Login validation failed", zap.Any("errors", errs))
 		return nil, fmt.Errorf("validation failed: %s", utils.FormatValidationErrors(errs))
 	}
 
-	// 2. Find user by username or email
+	// Try to find user by email first, then by username
 	var user *entity.User
 	var err error
 
-	// Coba cari by email
 	user, err = s.repo.User.FindByEmail(ctx, req.Username)
 	if err != nil {
 		s.log.Error("Failed to find user by email", zap.Error(err), zap.String("identifier", req.Username))
-		return nil, fmt.Errorf("failed to find user")
+		return nil, fmt.Errorf("find user by email %s: %w", req.Username, err)
 	}
 
-	// Jika tidak ditemukan, coba by username
+	// If not found by email, try username
 	if user == nil {
 		user, err = s.repo.User.FindByUsername(ctx, req.Username)
 		if err != nil {
 			s.log.Error("Failed to find user by username", zap.Error(err), zap.String("identifier", req.Username))
-			return nil, fmt.Errorf("failed to find user")
+			return nil, fmt.Errorf("find user by username %s: %w", req.Username, err)
 		}
 	}
 
-	// 3. User not found
+	// User not found
 	if user == nil {
 		s.log.Warn("User not found for login", zap.String("identifier", req.Username))
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, fmt.Errorf("user %s not found", req.Username)
 	}
 
-	// 4. Check password
+	// Verify password using bcrypt compare
 	if !utils.CheckPasswordHash(req.Password, user.PasswordHash) {
 		s.log.Warn("Invalid password", zap.String("user_id", user.ID.String()))
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, fmt.Errorf("invalid password for user %s", req.Username)
 	}
 
-	// 5. Check if user is active
+	// Check if account is active (not banned/deactivated)
 	if !user.IsActive {
 		s.log.Warn("Inactive user tried to login", zap.String("user_id", user.ID.String()))
-		return nil, fmt.Errorf("account is deactivated")
+		return nil, fmt.Errorf("account %s is deactivated", req.Username)
 	}
 
-	// 6. Create session
+	// Create new session
 	session, err := s.createSession(ctx, user.ID)
 	if err != nil {
 		s.log.Error("Failed to create session", zap.Error(err), zap.String("user_id", user.ID.String()))
-		return nil, fmt.Errorf("failed to create session")
+		return nil, fmt.Errorf("create session for user %s: %w", user.ID.String(), err)
 	}
 
 	s.log.Info("User logged in",
 		zap.String("user_id", user.ID.String()),
 		zap.String("username", user.Username))
 
-	return s.convertAuthResponse(user, session), nil
+	// Return response with session token
+	authResp := response.AuthToResponse(user, session)
+	return &authResp, nil
 }
 
 func (s *authService) Logout(ctx context.Context, token string) error {
-	// 1. Parse token
+	// Parse string token to UUID
 	tokenUUID, err := uuid.Parse(token)
 	if err != nil {
 		s.log.Warn("Invalid token format", zap.String("token", token), zap.Error(err))
-		return fmt.Errorf("invalid token format")
+		return fmt.Errorf("invalid token format %s: %w", token, err)
 	}
 
-	// 2. Revoke session
+	// Revoke session
 	if err := s.repo.Session.Revoke(ctx, tokenUUID.String()); err != nil {
 		s.log.Error("Failed to revoke session", zap.Error(err), zap.String("token", token))
-		return fmt.Errorf("failed to logout")
+		return fmt.Errorf("revoke session token %s: %w", token, err)
 	}
 
 	s.log.Info("User logged out", zap.String("token", token))
@@ -194,26 +197,26 @@ func (s *authService) Logout(ctx context.Context, token string) error {
 }
 
 func (s *authService) SendOTP(ctx context.Context, email, otpType string) error {
-	// 1. Find user
+	// Find user
 	user, err := s.repo.User.FindByEmail(ctx, email)
 	if err != nil {
 		s.log.Error("Failed to find user for OTP", zap.Error(err), zap.String("email", email))
-		return fmt.Errorf("failed to find user")
+		return fmt.Errorf("find user for OTP %s: %w", email, err)
 	}
 	if user == nil {
-		return fmt.Errorf("user not found")
+		return fmt.Errorf("user with email %s not found", email)
 	}
 
-	// 2. Check if already verified (for email verification)
+	// Check if already verified (for email verification)
 	if otpType == string(entity.OTPTypeEmailVerification) && user.EmailVerified {
-		return fmt.Errorf("email already verified")
+		return fmt.Errorf("email %s already verified", email)
 	}
 
-	// 3. Generate OTP
+	// Generate OTP
 	otpCode := utils.GenerateOTP(s.config.OTP.Length)
 	expiresAt := time.Now().Add(time.Duration(s.config.OTP.ExpiryMinutes) * time.Minute)
 
-	// 4. Create OTP entity
+	// Create OTP entity
 	otp := &entity.OTP{
 		BaseSimple: entity.BaseSimple{
 			ID:        uuid.New(),
@@ -227,16 +230,15 @@ func (s *authService) SendOTP(ctx context.Context, email, otpType string) error 
 		IsUsed:    false,
 	}
 
-	// 5. Save OTP
+	// Save OTP
 	if err := s.repo.OTP.Create(ctx, otp); err != nil {
 		s.log.Error("Failed to save OTP", zap.Error(err), zap.String("email", email))
-		return fmt.Errorf("failed to generate OTP")
+		return fmt.Errorf("save OTP for %s: %w", email, err)
 	}
 
-	// 6. Log OTP (in development)
+	// Log OTP (in development)
 	s.log.Info("OTP generated",
 		zap.String("email", email),
-		zap.String("otp_code", otpCode),
 		zap.String("otp_type", otpType),
 		zap.Time("expires_at", expiresAt),
 	)
@@ -249,42 +251,42 @@ func (s *authService) SendOTP(ctx context.Context, email, otpType string) error 
 }
 
 func (s *authService) VerifyEmail(ctx context.Context, req *request.VerifyEmailRequest) error {
-	// 1. Validasi
+	// Validate input
 	if errs := utils.ValidateStruct(req); len(errs) > 0 {
 		s.log.Warn("Verify email validation failed", zap.Any("errors", errs))
 		return fmt.Errorf("validation failed: %s", utils.FormatValidationErrors(errs))
 	}
 
-	// 2. Find valid OTP
+	// Find valid OTP
 	otp, err := s.repo.OTP.FindValidOTP(ctx, req.Email, req.OTP, string(entity.OTPTypeEmailVerification))
 	if err != nil {
 		s.log.Error("Failed to find OTP", zap.Error(err), zap.String("email", req.Email))
-		return fmt.Errorf("failed to verify OTP")
+		return fmt.Errorf("find OTP for %s: %w", req.Email, err)
 	}
 	if otp == nil {
-		return fmt.Errorf("invalid or expired OTP")
+		return fmt.Errorf("invalid or expired OTP for email %s", req.Email)
 	}
 
-	// 3. Mark OTP as used
+	// Mark OTP as used
 	if err := s.repo.OTP.MarkAsUsed(ctx, otp.ID); err != nil {
 		s.log.Warn("Failed to mark OTP as used", zap.Error(err), zap.String("otp_id", otp.ID.String()))
 		// Continue anyway
 	}
 
-	// 4. Find user
+	// Find user
 	user, err := s.repo.User.FindByEmail(ctx, req.Email)
 	if err != nil || user == nil {
 		s.log.Error("User not found for verification", zap.Error(err), zap.String("email", req.Email))
-		return fmt.Errorf("user not found")
+		return fmt.Errorf("find user for verification %s: %w", req.Email, err)
 	}
 
-	// 5. Update user verification status
+	// Update user verification status
 	user.EmailVerified = true
 	user.UpdatedAt = time.Now()
 
 	if err := s.repo.User.Update(ctx, user); err != nil {
 		s.log.Error("Failed to update user verification", zap.Error(err), zap.String("user_id", user.ID.String()))
-		return fmt.Errorf("failed to verify email")
+		return fmt.Errorf("update user verification %s: %w", user.ID.String(), err)
 	}
 
 	s.log.Info("Email verified",
@@ -308,27 +310,10 @@ func (s *authService) createSession(ctx context.Context, userID uuid.UUID) (*ent
 	}
 
 	if err := s.repo.Session.Create(ctx, session); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create session: %w", err)
 	}
 
 	return session, nil
-}
-
-func (s *authService) convertAuthResponse(user *entity.User, session *entity.Session) *response.AuthResponse {
-	resp := &response.AuthResponse{
-		UserID:     user.ID.String(),
-		Email:      user.Email,
-		Username:   user.Username,
-		Role:       entity.UserRole(user.Role),
-		IsVerified: user.EmailVerified,
-	}
-
-	if session != nil {
-		resp.Token = session.Token.String()
-		resp.ExpiresAt = session.ExpiresAt
-	}
-
-	return resp
 }
 
 func (s *authService) sendVerificationOTP(email string) {

@@ -3,7 +3,6 @@ package adaptor
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"cinema-booking/internal/dto/request"
@@ -35,21 +34,19 @@ func (h *MovieHandler) GetMovies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query()
-	req.Page = h.parseInt(query.Get("page"), 1)
-	req.PerPage = h.parseInt(query.Get("per_page"), 10)
+	req.Page = utils.ParseInt(query.Get("page"), 1)
+	req.PerPage = utils.ParseInt(query.Get("per_page"), 10)
 
-	// Filter by release_status (optional)
+	// Parse optional filter parameter
 	var releaseStatus *string
 	if status := query.Get("release_status"); status != "" {
-		// Valid values: "now_playing", "coming_soon", atau "now" (alias)
+		// Map "now" to "now_playing" for compatibility
 		if status == "now_playing" || status == "coming_soon" || status == "now" {
-			// Convert "now" to "now_playing" untuk consistency
 			if status == "now" {
 				status = "now_playing"
 			}
 			releaseStatus = &status
 		} else {
-			// Invalid status, ignore filter
 			h.log.Warn("Invalid release_status filter", zap.String("status", status))
 		}
 	}
@@ -61,24 +58,7 @@ func (h *MovieHandler) GetMovies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✅ FIX: Format response TEPAT seperti requirement
-	// Requirement: {"status":true,"message":"success","data":[],"pagination":{}}
-	response := map[string]interface{}{
-		"status":  true,
-		"message": "success",
-		"data":    movies.Data,
-		"pagination": map[string]interface{}{
-			"current_page":  req.Page,
-			"limit":         req.PerPage,
-			"total_pages":   movies.Pagination.TotalPages,
-			"total_records": movies.Pagination.Total,
-		},
-	}
-
-	// ✅ FIX: Manual JSON encode untuk format yang tepat
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	utils.ResponseSuccess(w, "success", movies)
 }
 
 // GetMovieByID handles GET /api/movies/{id} (optional)
@@ -95,8 +75,7 @@ func (h *MovieHandler) GetMovieByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✅ FIX: Pakai ResponseSuccess yang sudah ada
-	utils.ResponseSuccess(w, "Movie retrieved successfully", movie)
+	utils.ResponseSuccess(w, "success", movie)
 }
 
 // CreateMovie handles POST /api/admin/movies (admin only - optional)
@@ -203,22 +182,4 @@ func (h *MovieHandler) handleServiceError(w http.ResponseWriter, err error, oper
 			zap.String("operation", operation))
 		utils.ResponseInternalError(w, "Internal server error")
 	}
-}
-
-// parseInt helper
-func (h *MovieHandler) parseInt(value string, defaultValue int) int {
-	if value == "" {
-		return defaultValue
-	}
-
-	result, err := strconv.Atoi(value)
-	if err != nil {
-		return defaultValue
-	}
-
-	if result < 1 {
-		return defaultValue
-	}
-
-	return result
 }

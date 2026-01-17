@@ -47,7 +47,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseCreated(w, "Registration successful. Check logs for OTP.", response)
+	utils.ResponseCreated(w, "success", response)
 }
 
 // Login handles POST /api/login
@@ -71,7 +71,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "Login successful", response)
+	utils.ResponseSuccess(w, "success", response)
 }
 
 // Logout handles POST /api/logout
@@ -84,26 +84,25 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Format: "Bearer <token-uuid>"
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	if token == "" {
-		utils.ResponseBadRequest(w, "Invalid token format", nil)
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		utils.ResponseBadRequest(w, "Invalid token format. Use: Bearer <token>", nil)
 		return
 	}
+
+	token := parts[1]
 
 	if err := h.service.Logout(r.Context(), token); err != nil {
 		h.handleServiceError(w, err, "logout")
 		return
 	}
 
-	utils.ResponseSuccess(w, "Logout successful", nil)
+	utils.ResponseSuccess(w, "success", nil)
 }
 
 // SendOTP handles POST /api/send-otp
 func (h *AuthHandler) SendOTP(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email string `json:"email" validate:"required,email"`
-		Type  string `json:"type" validate:"required,oneof=email_verification password_reset"`
-	}
+	var req request.SendOTPRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.ResponseBadRequest(w, "Invalid request body", nil)
@@ -121,7 +120,7 @@ func (h *AuthHandler) SendOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "OTP sent successfully (check console/logs)", nil)
+	utils.ResponseSuccess(w, "success", nil)
 }
 
 // VerifyEmail handles POST /api/verify-email
@@ -144,13 +143,14 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "Email verified successfully", nil)
+	utils.ResponseSuccess(w, "success", nil)
 }
 
-// handleServiceError handles different types of errors
+// handleServiceError categorizes service errors and returns appropriate HTTP responses
 func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error, operation string) {
 	errMsg := err.Error()
 
+	// Check error message patterns to determine error type
 	switch {
 	case strings.Contains(errMsg, "not found"):
 		h.log.Warn(operation+" failed - not found", zap.Error(err))
@@ -163,7 +163,8 @@ func (h *AuthHandler) handleServiceError(w http.ResponseWriter, err error, opera
 		utils.ResponseBadRequest(w, errMsg, err)
 
 	case strings.Contains(errMsg, "invalid credentials"),
-		strings.Contains(errMsg, "incorrect"):
+		strings.Contains(errMsg, "incorrect"),
+		strings.Contains(errMsg, "invalid password"):
 		h.log.Warn(operation+" failed - invalid credentials", zap.Error(err))
 		utils.ResponseUnauthorized(w, errMsg)
 

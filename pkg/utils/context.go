@@ -14,6 +14,7 @@ const (
 	TokenKey  contextKey = "token"
 )
 
+// GetUserIDFromContext extracts user ID from context
 func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	userIDVal := ctx.Value(UserIDKey)
 	if userIDVal == nil {
@@ -33,6 +34,7 @@ func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return userID, true
 }
 
+// GetRoleFromContext extracts role from context
 func GetRoleFromContext(ctx context.Context) (string, bool) {
 	roleVal := ctx.Value(RoleKey)
 	if roleVal == nil {
@@ -43,6 +45,7 @@ func GetRoleFromContext(ctx context.Context) (string, bool) {
 	return role, ok
 }
 
+// SetUserContext adds user ID and role to context
 func SetUserContext(ctx context.Context, userID uuid.UUID, role string) context.Context {
 	ctx = context.WithValue(ctx, UserIDKey, userID.String())
 	ctx = context.WithValue(ctx, RoleKey, role)

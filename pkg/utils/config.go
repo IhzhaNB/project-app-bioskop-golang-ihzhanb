@@ -46,11 +46,12 @@ type OTPConfig struct {
 	Length        int
 }
 
+// LoadConfig loads configuration from .env file
 func LoadConfig() (*Config, error) {
 	viper.SetConfigFile(".env")
 	viper.SetConfigType("env")
 
-	// Set defaults
+	// Default values for optional configs
 	viper.SetDefault("PORT", "8080")
 	viper.SetDefault("DEBUG", false)
 	viper.SetDefault("DB_MAX_CONNS", 10)
@@ -59,12 +60,15 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("OTP_LENGTH", 6)
 	viper.SetDefault("LOG_PATH", "logs/")
 
+	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
 
+	// Enable reading from environment variables
 	viper.AutomaticEnv()
 
+	// Create config struct
 	config := &Config{
 		App: AppConfig{
 			Name:    viper.GetString("APP_NAME"),

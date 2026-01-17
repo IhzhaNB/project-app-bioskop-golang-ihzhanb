@@ -14,16 +14,12 @@ import (
 )
 
 type CinemaRepository interface {
-	// CRUD Cinema
 	Create(ctx context.Context, cinema *entity.Cinema) error
 	FindByID(ctx context.Context, id uuid.UUID) (*entity.Cinema, error)
-	FindAll(ctx context.Context, page, limit int, city *string) ([]*entity.Cinema, error)
-	CountAll(ctx context.Context, city *string) (int64, error)
+	FindAll(ctx context.Context, limit, offset int, cityFilter *string) ([]*entity.Cinema, error)
+	CountAll(ctx context.Context, cityFilter *string) (int64, error)
 	Update(ctx context.Context, cinema *entity.Cinema) error
 	Delete(ctx context.Context, id uuid.UUID) error
-
-	// Find by city
-	FindByCity(ctx context.Context, city string) ([]*entity.Cinema, error)
 }
 
 type cinemaRepository struct {
@@ -57,8 +53,9 @@ func (r *cinemaRepository) Create(ctx context.Context, cinema *entity.Cinema) er
 		r.log.Error("Failed to create cinema",
 			zap.Error(err),
 			zap.String("name", cinema.Name),
+			zap.String("city", cinema.City),
 		)
-		return fmt.Errorf("failed to create cinema: %w", err)
+		return fmt.Errorf("create cinema %s: %w", cinema.Name, err)
 	}
 
 	return nil
@@ -90,20 +87,14 @@ func (r *cinemaRepository) FindByID(ctx context.Context, id uuid.UUID) (*entity.
 			zap.Error(err),
 			zap.String("cinema_id", id.String()),
 		)
-		return nil, fmt.Errorf("failed to find cinema: %w", err)
+		return nil, fmt.Errorf("find cinema by ID %s: %w", id.String(), err)
 	}
 
 	return &cinema, nil
 }
 
-func (r *cinemaRepository) FindAll(ctx context.Context, page, limit int, city *string) ([]*entity.Cinema, error) {
-	// Calculate offset
-	offset := (page - 1) * limit
-	if offset < 0 {
-		offset = 0
-	}
-
-	// Build query
+func (r *cinemaRepository) FindAll(ctx context.Context, limit, offset int, cityFilter *string) ([]*entity.Cinema, error) {
+	// Build query dengan optional filter
 	var queryBuilder strings.Builder
 	queryBuilder.WriteString(`
 		SELECT id, name, location, city, created_at, updated_at
@@ -114,9 +105,9 @@ func (r *cinemaRepository) FindAll(ctx context.Context, page, limit int, city *s
 	args := []interface{}{}
 	argCount := 1
 
-	if city != nil && *city != "" {
-		queryBuilder.WriteString(fmt.Sprintf(" AND city = $%d", argCount))
-		args = append(args, *city)
+	if cityFilter != nil && *cityFilter != "" {
+		queryBuilder.WriteString(fmt.Sprintf(" AND city ILIKE $%d", argCount))
+		args = append(args, "%"+*cityFilter+"%")
 		argCount++
 	}
 
@@ -128,11 +119,11 @@ func (r *cinemaRepository) FindAll(ctx context.Context, page, limit int, city *s
 	if err != nil {
 		r.log.Error("Failed to find all cinemas",
 			zap.Error(err),
-			zap.Int("page", page),
 			zap.Int("limit", limit),
-			zap.Stringp("city", city),
+			zap.Int("offset", offset),
+			zap.Stringp("city_filter", cityFilter),
 		)
-		return nil, fmt.Errorf("failed to find cinemas: %w", err)
+		return nil, fmt.Errorf("find all cinemas limit %d offset %d: %w", limit, offset, err)
 	}
 	defer rows.Close()
 
@@ -149,21 +140,27 @@ func (r *cinemaRepository) FindAll(ctx context.Context, page, limit int, city *s
 		)
 		if err != nil {
 			r.log.Error("Failed to scan cinema row", zap.Error(err))
-			return nil, fmt.Errorf("failed to scan cinema: %w", err)
+			return nil, fmt.Errorf("scan cinema row: %w", err)
 		}
 		cinemas = append(cinemas, &cinema)
+	}
+
+	if err := rows.Err(); err != nil {
+		r.log.Error("Rows iteration error", zap.Error(err))
+		return nil, fmt.Errorf("iterate cinema rows: %w", err)
 	}
 
 	return cinemas, nil
 }
 
-func (r *cinemaRepository) CountAll(ctx context.Context, city *string) (int64, error) {
+func (r *cinemaRepository) CountAll(ctx context.Context, cityFilter *string) (int64, error) {
+	// Build count query
 	query := `SELECT COUNT(*) FROM cinemas WHERE deleted_at IS NULL`
 	args := []interface{}{}
 
-	if city != nil && *city != "" {
-		query += " AND city = $1"
-		args = append(args, *city)
+	if cityFilter != nil && *cityFilter != "" {
+		query += " AND city ILIKE $1"
+		args = append(args, "%"+*cityFilter+"%")
 	}
 
 	var total int64
@@ -171,51 +168,12 @@ func (r *cinemaRepository) CountAll(ctx context.Context, city *string) (int64, e
 	if err != nil {
 		r.log.Error("Failed to count cinemas",
 			zap.Error(err),
-			zap.Stringp("city", city),
+			zap.Stringp("city_filter", cityFilter),
 		)
-		return 0, fmt.Errorf("failed to count cinemas: %w", err)
+		return 0, fmt.Errorf("count all cinemas: %w", err)
 	}
 
 	return total, nil
-}
-
-func (r *cinemaRepository) FindByCity(ctx context.Context, city string) ([]*entity.Cinema, error) {
-	query := `
-		SELECT id, name, location, city, created_at, updated_at
-		FROM cinemas
-		WHERE city = $1 AND deleted_at IS NULL
-		ORDER BY name
-	`
-
-	rows, err := r.db.Query(ctx, query, city)
-	if err != nil {
-		r.log.Error("Failed to find cinemas by city",
-			zap.Error(err),
-			zap.String("city", city),
-		)
-		return nil, fmt.Errorf("failed to find cinemas: %w", err)
-	}
-	defer rows.Close()
-
-	var cinemas []*entity.Cinema
-	for rows.Next() {
-		var cinema entity.Cinema
-		err := rows.Scan(
-			&cinema.ID,
-			&cinema.Name,
-			&cinema.Location,
-			&cinema.City,
-			&cinema.CreatedAt,
-			&cinema.UpdatedAt,
-		)
-		if err != nil {
-			r.log.Error("Failed to scan cinema row", zap.Error(err))
-			return nil, fmt.Errorf("failed to scan cinema: %w", err)
-		}
-		cinemas = append(cinemas, &cinema)
-	}
-
-	return cinemas, nil
 }
 
 func (r *cinemaRepository) Update(ctx context.Context, cinema *entity.Cinema) error {
@@ -238,11 +196,11 @@ func (r *cinemaRepository) Update(ctx context.Context, cinema *entity.Cinema) er
 			zap.Error(err),
 			zap.String("cinema_id", cinema.ID.String()),
 		)
-		return fmt.Errorf("failed to update cinema: %w", err)
+		return fmt.Errorf("update cinema %s: %w", cinema.ID.String(), err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("cinema not found or already deleted")
+		return fmt.Errorf("cinema %s not found or already deleted", cinema.ID.String())
 	}
 
 	return nil
@@ -257,13 +215,13 @@ func (r *cinemaRepository) Delete(ctx context.Context, id uuid.UUID) error {
 			zap.Error(err),
 			zap.String("cinema_id", id.String()),
 		)
-		return fmt.Errorf("failed to delete cinema: %w", err)
+		return fmt.Errorf("delete cinema %s: %w", id.String(), err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("cinema not found or already deleted")
+		return fmt.Errorf("cinema %s not found", id.String())
 	}
 
-	r.log.Info("Cinema soft deleted", zap.String("cinema_id", id.String()))
+	r.log.Info("Cinema deleted", zap.String("cinema_id", id.String()))
 	return nil
 }

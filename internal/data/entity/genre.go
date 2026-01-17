@@ -1,6 +1,6 @@
 package entity
 
 type Genre struct {
-	BaseNoDelete
+	BaseSimple
 	Name string `db:"name"`
 }

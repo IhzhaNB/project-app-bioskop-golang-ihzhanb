@@ -1,11 +1,12 @@
 package repository
 
 import (
-	"cinema-booking/internal/data/entity"
-	"cinema-booking/pkg/database"
 	"context"
 	"fmt"
 	"strings"
+
+	"cinema-booking/internal/data/entity"
+	"cinema-booking/pkg/database"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,15 +14,12 @@ import (
 )
 
 type MovieRepository interface {
-	// CRUD Movie
 	Create(ctx context.Context, movie *entity.Movie) error
 	FindByID(ctx context.Context, id uuid.UUID) (*entity.Movie, error)
+	FindAll(ctx context.Context, limit, offset int, releaseStatus *string) ([]*entity.Movie, error)
+	CountAll(ctx context.Context, releaseStatus *string) (int64, error)
 	Update(ctx context.Context, movie *entity.Movie) error
 	Delete(ctx context.Context, id uuid.UUID) error
-	FindAll(ctx context.Context, offset, limit int, releaseStatus *string) ([]*entity.Movie, error)
-	CountAll(ctx context.Context, releaseStatus *string) (int64, error)
-
-	// Update rating
 	UpdateRating(ctx context.Context, movieID uuid.UUID, newRating float64) error
 }
 
@@ -39,7 +37,7 @@ func NewMovieRepository(db database.PgxIface, log *zap.Logger) MovieRepository {
 
 func (r *movieRepository) Create(ctx context.Context, movie *entity.Movie) error {
 	query := `
-		INSERT INTO movies (id, title, description, poster_url, rating, 
+		INSERT INTO movies (id, title, description, poster_url, rating,
 		                   release_date, duration_in_minutes, release_status,
 		                   created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -63,7 +61,7 @@ func (r *movieRepository) Create(ctx context.Context, movie *entity.Movie) error
 			zap.Error(err),
 			zap.String("title", movie.Title),
 		)
-		return fmt.Errorf("failed to create movie: %w", err)
+		return fmt.Errorf("create movie: %w", err)
 	}
 
 	return nil
@@ -100,15 +98,18 @@ func (r *movieRepository) FindByID(ctx context.Context, id uuid.UUID) (*entity.M
 			zap.Error(err),
 			zap.String("movie_id", id.String()),
 		)
-		return nil, fmt.Errorf("failed to find movie: %w", err)
+		return nil, fmt.Errorf("find movie by id: %w", err)
 	}
 
 	return &movie, nil
 }
 
-func (r *movieRepository) FindAll(ctx context.Context, offset, limit int, releaseStatus *string) ([]*entity.Movie, error) {
-	// Build query dengan optional filter
+func (r *movieRepository) FindAll(ctx context.Context, limit, offset int, releaseStatus *string) ([]*entity.Movie, error) {
+	// Build query dynamically based on filter
 	var queryBuilder strings.Builder
+	args := []interface{}{}
+	argCount := 1
+
 	queryBuilder.WriteString(`
 		SELECT id, title, description, poster_url, rating, release_date,
 		       duration_in_minutes, release_status, created_at, updated_at
@@ -116,28 +117,27 @@ func (r *movieRepository) FindAll(ctx context.Context, offset, limit int, releas
 		WHERE deleted_at IS NULL
 	`)
 
-	args := []interface{}{}
-	argCount := 1
-
+	// Add release_status filter if provided
 	if releaseStatus != nil && *releaseStatus != "" {
 		queryBuilder.WriteString(fmt.Sprintf(" AND release_status = $%d", argCount))
 		args = append(args, *releaseStatus)
 		argCount++
 	}
 
+	// Add pagination parameters
 	queryBuilder.WriteString(fmt.Sprintf(" ORDER BY release_date DESC LIMIT $%d OFFSET $%d", argCount, argCount+1))
 	args = append(args, limit, offset)
 
-	// Execute query
+	// Execute dynamic query
 	rows, err := r.db.Query(ctx, queryBuilder.String(), args...)
 	if err != nil {
 		r.log.Error("Failed to find all movies",
 			zap.Error(err),
-			zap.Int("offset", offset),
 			zap.Int("limit", limit),
+			zap.Int("offset", offset),
 			zap.Stringp("release_status", releaseStatus),
 		)
-		return nil, fmt.Errorf("failed to find movies: %w", err)
+		return nil, fmt.Errorf("find all movies: %w", err)
 	}
 	defer rows.Close()
 
@@ -158,20 +158,20 @@ func (r *movieRepository) FindAll(ctx context.Context, offset, limit int, releas
 		)
 		if err != nil {
 			r.log.Error("Failed to scan movie row", zap.Error(err))
-			return nil, fmt.Errorf("failed to scan movie: %w", err)
+			return nil, fmt.Errorf("scan movie row: %w", err)
 		}
 		movies = append(movies, &movie)
 	}
 
 	if err := rows.Err(); err != nil {
 		r.log.Error("Rows iteration error", zap.Error(err))
-		return nil, fmt.Errorf("failed to iterate rows: %w", err)
+		return nil, fmt.Errorf("rows iteration: %w", err)
 	}
 
 	r.log.Debug("Movies found",
 		zap.Int("count", len(movies)),
-		zap.Int("offset", offset),
 		zap.Int("limit", limit),
+		zap.Int("offset", offset),
 	)
 
 	return movies, nil
@@ -194,13 +194,8 @@ func (r *movieRepository) CountAll(ctx context.Context, releaseStatus *string) (
 			zap.Error(err),
 			zap.Stringp("release_status", releaseStatus),
 		)
-		return 0, fmt.Errorf("failed to count movies: %w", err)
+		return 0, fmt.Errorf("count movies: %w", err)
 	}
-
-	r.log.Debug("Movies counted",
-		zap.Int64("total", total),
-		zap.Stringp("release_status", releaseStatus),
-	)
 
 	return total, nil
 }
@@ -231,7 +226,7 @@ func (r *movieRepository) Update(ctx context.Context, movie *entity.Movie) error
 			zap.Error(err),
 			zap.String("movie_id", movie.ID.String()),
 		)
-		return fmt.Errorf("failed to update movie: %w", err)
+		return fmt.Errorf("update movie: %w", err)
 	}
 
 	rowsAffected := result.RowsAffected()
@@ -251,7 +246,7 @@ func (r *movieRepository) Delete(ctx context.Context, id uuid.UUID) error {
 			zap.Error(err),
 			zap.String("movie_id", id.String()),
 		)
-		return fmt.Errorf("failed to delete movie: %w", err)
+		return fmt.Errorf("delete movie: %w", err)
 	}
 
 	rowsAffected := result.RowsAffected()

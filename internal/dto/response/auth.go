@@ -24,3 +24,33 @@ type UserResponse struct {
 	IsVerified bool            `json:"is_verified"`
 	CreatedAt  time.Time       `json:"created_at"`
 }
+
+// Helper converters
+func UserToResponse(user *entity.User) UserResponse {
+	return UserResponse{
+		ID:         user.ID.String(),
+		Username:   user.Username,
+		Email:      user.Email,
+		Phone:      user.Phone,
+		Role:       user.Role,
+		IsVerified: user.EmailVerified,
+		CreatedAt:  user.CreatedAt,
+	}
+}
+
+func AuthToResponse(user *entity.User, session *entity.Session) AuthResponse {
+	resp := AuthResponse{
+		UserID:     user.ID.String(),
+		Email:      user.Email,
+		Username:   user.Username,
+		Role:       user.Role,
+		IsVerified: user.EmailVerified,
+	}
+
+	if session != nil {
+		resp.Token = session.Token.String()
+		resp.ExpiresAt = session.ExpiresAt
+	}
+
+	return resp
+}

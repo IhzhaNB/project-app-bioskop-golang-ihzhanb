@@ -7,7 +7,7 @@ type MovieRequest struct {
 	ReleaseDate       string   `json:"release_date" validate:"required,datetime=2006-01-02"`
 	DurationInMinutes int      `json:"duration_in_minutes" validate:"required,min=1,max=999"`
 	ReleaseStatus     string   `json:"release_status" validate:"required,oneof=now_playing coming_soon"`
-	GenreIDs          []string `json:"genre_ids,omitempty" validate:"dive,uuid4"` // optional
+	GenreIDs          []string `json:"genre_ids,omitempty" validate:"dive,uuid4"`
 }
 
 type MovieUpdateRequest struct {

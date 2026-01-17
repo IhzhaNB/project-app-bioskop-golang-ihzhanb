@@ -1,4 +1,3 @@
-// pkg/database/db.go
 package database
 
 import (
@@ -8,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	pgxconn "github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,7 +15,7 @@ import (
 type PgxIface interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgxconn.CommandTag, error) // Pakai alias
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 	Ping(ctx context.Context) error
 	Close()
@@ -38,7 +37,7 @@ func (db *DB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 }
 
 // Exec implements PgxIface - FIXED
-func (db *DB) Exec(ctx context.Context, sql string, args ...any) (pgxconn.CommandTag, error) {
+func (db *DB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	return db.pool.Exec(ctx, sql, args...)
 }
 

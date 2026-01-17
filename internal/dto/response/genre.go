@@ -7,6 +7,7 @@ type GenreResponse struct {
 	Name string `json:"name"`
 }
 
+// Helper converter
 func GenreToResponse(genre *entity.Genre) GenreResponse {
 	return GenreResponse{
 		ID:   genre.ID.String(),

@@ -2,7 +2,6 @@ package adaptor
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"cinema-booking/internal/dto/request"
@@ -40,7 +39,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "Profile retrieved successfully", profile)
+	utils.ResponseSuccess(w, "success", profile)
 }
 
 // GetAllUsers handles GET /api/admin/users (admin only)
@@ -50,10 +49,10 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		PerPage: 10,
 	}
 
-	// Parse query parameters
+	// Parse query parameters menggunakan utils.ParseInt
 	query := r.URL.Query()
-	req.Page = h.parseInt(query.Get("page"), 1)
-	req.PerPage = h.parseInt(query.Get("per_page"), 10)
+	req.Page = utils.ParseInt(query.Get("page"), 1)
+	req.PerPage = utils.ParseInt(query.Get("per_page"), 10)
 
 	// Validate per_page max
 	if req.PerPage > 100 {
@@ -66,7 +65,7 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "Users retrieved successfully", users)
+	utils.ResponseSuccess(w, "success", users)
 }
 
 // DeleteUser handles DELETE /api/admin/users/{id} (admin only)
@@ -82,7 +81,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.ResponseSuccess(w, "User deleted successfully", nil)
+	utils.ResponseSuccess(w, "success", nil)
 }
 
 // handleServiceError handles errors for user operations
@@ -117,22 +116,4 @@ func (h *UserHandler) handleServiceError(w http.ResponseWriter, err error, opera
 			zap.String("operation", operation))
 		utils.ResponseInternalError(w, "Internal server error")
 	}
-}
-
-// parseInt helper untuk parse query parameters
-func (h *UserHandler) parseInt(value string, defaultValue int) int {
-	if value == "" {
-		return defaultValue
-	}
-
-	result, err := strconv.Atoi(value)
-	if err != nil {
-		return defaultValue
-	}
-
-	if result < 1 {
-		return defaultValue
-	}
-
-	return result
 }

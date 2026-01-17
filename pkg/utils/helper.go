@@ -3,31 +3,29 @@ package utils
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"time"
-
-	"github.com/google/uuid"
 )
 
-// ==================== UUID & TOKEN ====================
+// ParseInt converts string to int with default value
+func ParseInt(value string, defaultValue int) int {
+	if value == "" {
+		return defaultValue
+	}
 
-func GenerateUUID() uuid.UUID {
-	return uuid.New()
+	result, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+
+	if result < 1 {
+		return defaultValue
+	}
+
+	return result
 }
 
-func GenerateUUIDString() string {
-	return uuid.New().String()
-}
-
-func ParseUUID(uuidStr string) (uuid.UUID, error) {
-	return uuid.Parse(uuidStr)
-}
-
-func GenerateSessionToken() uuid.UUID {
-	return uuid.New()
-}
-
-// ==================== OTP ====================
-
+// GenerateOTP creates a numeric OTP of specified length
 func GenerateOTP(length int) string {
 	if length <= 0 {
 		length = 6
@@ -43,8 +41,7 @@ func GenerateOTP(length int) string {
 	return otp
 }
 
-// ==================== ORDER ID ====================
-
+// GenerateOrderID creates a unique order ID with timestamp
 func GenerateOrderID() string {
 	rand.New(rand.NewSource(time.Now().UnixNano()))
 	now := time.Now()

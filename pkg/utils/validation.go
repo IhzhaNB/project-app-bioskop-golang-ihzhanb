@@ -18,14 +18,15 @@ func ValidateStruct(data interface{}) map[string]string {
 	errors := make(map[string]string)
 	if validationErrors, ok := err.(validator.ValidationErrors); ok {
 		for _, err := range validationErrors {
-			errors[err.Field()] = getSimpleErrorMessage(err)
+			errors[err.Field()] = getErrorMessage(err)
 		}
 	}
 
 	return errors
 }
 
-func getSimpleErrorMessage(err validator.FieldError) string {
+// converts validator errors to human-readable messages
+func getErrorMessage(err validator.FieldError) string {
 	switch err.Tag() {
 	case "required":
 		return "This field is required"
@@ -47,6 +48,7 @@ func getSimpleErrorMessage(err validator.FieldError) string {
 	}
 }
 
+// formats validation errors map into single string
 func FormatValidationErrors(errors map[string]string) string {
 	var msgs []string
 	for field, msg := range errors {

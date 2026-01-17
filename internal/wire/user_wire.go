@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// wireUser configures user management routes with role-based access control
 func wireUser(
 	r chi.Router,
 	userHandler *adaptor.UserHandler,
@@ -18,16 +19,16 @@ func wireUser(
 	log *zap.Logger,
 ) {
 	// ==================== PROTECTED USER ROUTES ====================
-	// User profile - butuh auth
+	// User profile - requires authentication
 	r.With(middleware.AuthSession(repo.Session, log)).Get("/api/user/profile", userHandler.GetProfile)
 
 	// ==================== ADMIN ROUTES ====================
-	// Admin routes - butuh auth + admin role
+	// Admin user management - requires both authentication AND admin role
 	r.With(
-		middleware.AuthSession(repo.Session, log),
-		middleware.Admin(repo.User, log),
+		middleware.AuthSession(repo.Session, log), // Check valid session
+		middleware.Admin(repo.User, log),          // Check admin role
 	).Route("/api/admin/users", func(r chi.Router) {
-		r.Get("/", userHandler.GetAllUsers)
-		r.Delete("/{id}", userHandler.DeleteUser)
+		r.Get("/", userHandler.GetAllUsers)       // GET /api/admin/users?page=1&per_page=10
+		r.Delete("/{id}", userHandler.DeleteUser) // DELETE /api/admin/users/{user-id}
 	})
 }

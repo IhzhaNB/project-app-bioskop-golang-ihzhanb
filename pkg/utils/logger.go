@@ -2,6 +2,7 @@ package utils
 
 import (
 	"os"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -9,7 +10,7 @@ import (
 )
 
 func InitLogger(path string, debug bool) (*zap.Logger, error) {
-	// Buat folder log jika belum ada
+	// Create log directory if not exists
 	if path != "" {
 		if err := os.MkdirAll(path, 0755); err != nil {
 			return nil, err
@@ -23,23 +24,23 @@ func InitLogger(path string, debug bool) (*zap.Logger, error) {
 	}
 	encoderConfig.TimeKey = "timestamp"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoderConfig.CallerKey = "caller"                      // TAMBAH INI untuk tau file:line
-	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder // TAMBAH INI
+	encoderConfig.CallerKey = "caller"                      // Track file:line
+	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder // EncodeCaller type short
 
-	// set format log
+	// Choose encoder format
 	encoder := zapcore.NewJSONEncoder(encoderConfig)
 	if debug {
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	}
 
-	// Level log
+	// Set log level
 	logLevel := zap.InfoLevel
 	if debug {
 		logLevel = zap.DebugLevel
 	}
 
-	// File sink dengan rotasi log
-	logFile := path + "cinema-booking.log"
+	// File sink with log rotation
+	logFile := path + time.Now().Format("20060102") + ".log"
 	fileWriter := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   logFile,
 		MaxSize:    10, // MB
@@ -48,17 +49,16 @@ func InitLogger(path string, debug bool) (*zap.Logger, error) {
 		Compress:   true,
 	})
 
-	// Stdout sink
+	// Console sink (stdout)
 	consoleWriter := zapcore.AddSync(os.Stdout)
 
-	// Gabungkan ke dalam satu core
+	// Combine multiple sinks
 	core := zapcore.NewTee(
 		zapcore.NewCore(encoder, fileWriter, logLevel),
 		zapcore.NewCore(encoder, consoleWriter, logLevel),
 	)
 
-	// Buat logger DENGAN CALLER (ini yang penting!)
-	logger := zap.New(core, zap.AddCaller()) // ← INI yang bikin tau file:line
-
+	// Create logger with caller info
+	logger := zap.New(core, zap.AddCaller())
 	return logger, nil
 }

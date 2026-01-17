@@ -50,6 +50,9 @@ func setupRouter(
 	wireAuth(r, handler.Auth, repo, config, logger)
 	wireUser(r, handler.User, repo, config, logger)
 	wireMovie(r, handler.Movie, repo, config, logger)
+	wireCinema(r, handler.Cinema, repo, config, logger)
+	wireBooking(r, handler.Booking, repo, config, logger)
+	wireReview(r, handler.Review, repo, config, logger)
 
 	// Health check endpoint
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

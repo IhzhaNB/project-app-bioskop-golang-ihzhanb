@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// wireAuth configures authentication-related routes with appropriate middleware
 func wireAuth(
 	r chi.Router,
 	authHandler *adaptor.AuthHandler,
@@ -18,13 +19,13 @@ func wireAuth(
 	log *zap.Logger,
 ) {
 	// ==================== PUBLIC ROUTES ====================
-	// Public routes (tanpa auth middleware)
-	r.Post("/api/register", authHandler.Register)
-	r.Post("/api/login", authHandler.Login)
-	r.Post("/api/send-otp", authHandler.SendOTP)
-	r.Post("/api/verify-email", authHandler.VerifyEmail)
+	// These endpoints don't require authentication
+	r.Post("/api/register", authHandler.Register)        // User registration
+	r.Post("/api/login", authHandler.Login)              // User login
+	r.Post("/api/send-otp", authHandler.SendOTP)         // Request OTP for verification
+	r.Post("/api/verify-email", authHandler.VerifyEmail) // Verify email with OTP
 
 	// ==================== PROTECTED ROUTES ====================
-	// Logout - PROTECTED (butuh auth)
+	// Logout requires valid session (can't logout without being logged in)
 	r.With(middleware.AuthSession(repo.Session, log)).Post("/api/logout", authHandler.Logout)
 }
